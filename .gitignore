@@ -1,3 +1,4 @@
 standby-seed.tar
 haproxy.cfg
 tmp/
+build/conjur/*.tar

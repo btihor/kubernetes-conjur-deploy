@@ -25,11 +25,6 @@ echo "deploying main cluster"
 sed -e "s#{{ CONJUR_APPLIANCE_IMAGE }}#$conjur_appliance_image#g" ./manifests/conjur-cluster.yaml |
   kubectl create -f -
 
-echo "deploying followers"
-sed -e "s#{{ CONJUR_APPLIANCE_IMAGE }}#$conjur_appliance_image#g" ./manifests/conjur-follower.yaml |
-  sed -e "s#{{ AUTHENTICATOR_SERVICE_ID }}#$AUTHENTICATOR_SERVICE_ID#g" |
-  kubectl create -f -
-
 sleep 10
 
 echo "Waiting for Conjur pods to launch..."

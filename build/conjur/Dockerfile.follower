@@ -1,0 +1,4 @@
+FROM conjur-appliance:4.9-stable
+
+COPY follower-seed.tar /tmp/follower-seed.tar
+COPY run.follower /etc/service/evoke-startup/run

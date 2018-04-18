@@ -11,21 +11,23 @@ master_pod_name=$(get_master_pod_name)
 
 echo "Preparing follower seed files..."
 
-mkdir -p tmp
-kubectl exec $master_pod_name evoke seed follower conjur-follower > ./tmp/follower-seed.tar
+kubectl exec $master_pod_name evoke seed follower conjur-follower > ./build/conjur/follower-seed.tar
 
-master_pod_ip=$(kubectl describe pod $master_pod_name | awk '/IP:/ { print $2 }')
-pod_list=$(kubectl get pods -l role=follower --no-headers | awk '{ print $1 }')
+pushd build/conjur
+  ./build_follower.sh
+popd
 
-for pod_name in $pod_list; do
-  printf "Configuring follower %s...\n" $pod_name
+rm ./build/conjur/follower-seed.tar
 
-  copy_file_to_container "./tmp/follower-seed.tar" "/tmp/follower-seed.tar" "$pod_name"
+docker_tag_and_push "conjur-appliance-follower"
 
-  kubectl exec $pod_name evoke unpack seed /tmp/follower-seed.tar
-  kubectl exec $pod_name -- evoke configure follower
-done
+echo "Follower image built."
 
-rm -rf tmp
+conjur_appliance_image=$DOCKER_REGISTRY_PATH/conjur-appliance-follower:$CONJUR_NAMESPACE_NAME
 
-echo "Followers configured."
+echo "deploying followers"
+sed -e "s#{{ CONJUR_APPLIANCE_IMAGE }}#$conjur_appliance_image#g" ./manifests/conjur-follower.yaml |
+  sed -e "s#{{ AUTHENTICATOR_SERVICE_ID }}#$AUTHENTICATOR_SERVICE_ID#g" |
+  kubectl create -f -
+
+echo "Followers deployed."

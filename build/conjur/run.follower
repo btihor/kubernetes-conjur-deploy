@@ -1,0 +1,4 @@
+#!/bin/bash -ex
+evoke unpack seed /tmp/follower-seed.tar
+evoke configure follower
+sleep infinity
