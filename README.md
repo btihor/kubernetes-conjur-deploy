@@ -1,7 +1,10 @@
 # kubernetes-conjur-deploy
 
-This repository contains scripts for deploying a Conjur v4 cluster to a
+This repository contains scripts for deploying a Conjur cluster to a
 Kubernetes or OpenShift environment.
+
+**Note:** These scripts are intended for use with Conjur v4 and v5
+**Enterprise**. To deploy Conjur OSS, please use the [Conjur OSS helm chart](https://github.com/cyberark/conjur-oss-helm-chart).
 
 # Setup
 
@@ -10,12 +13,28 @@ environment variables. The setup instructions below walk you through the
 necessary steps for configuring your environment and show you which variables
 need to be set before deploying.
 
+All environment variables can be set/defined with the bootstrap.env file. Edit the values per instructions below, source the file and run 0_check_dependencies.sh to verify.
+
+The Conjur appliance image can be loaded with _load_conjur_tarfile.sh. The script uses environment variables to locate the tarfile image and the value to use as a tag once it's loaded.
+
+### Conjur Version
+
+If you are working with Conjur v4, you will need to set:
+
+```
+export CONJUR_VERSION=4
+```
+
+Otherwise, this variable will default to `5`.
+
 ### Platform
 
-If you are working with OpenShift, you will need to begin by setting:
+If you are working with OpenShift, you will need to set:
 
 ```
 export PLATFORM=openshift
+export OSHIFT_CLUSTER_ADMIN_USERNAME=<name-of-cluster-admin> # system:admin in minishift
+export OSHIFT_CONJUR_ADMIN_USERNAME=<name-of-conjur-namespace-admin> # developer in minishift
 ```
 
 Otherwise, this variable will default to `kubernetes`.
@@ -28,7 +47,7 @@ do not already have it.
 #### Kubernetes
 
 You will need to provide the domain and any additional pathing for the Docker
-registry from which your Kubernetes cluster pulls images: 
+registry from which your Kubernetes cluster pulls images:
 
 ```
 export DOCKER_REGISTRY_URL=<registry-domain>
@@ -38,7 +57,7 @@ export DOCKER_REGISTRY_PATH=<registry-domain>/<additional-pathing>
 Note that the deploy scripts will be pushing images to this registry so you will
 need to have push access.
 
-If you are using a private registry, you will also need to provide login 
+If you are using a private registry, you will also need to provide login
 credentials that are used by the deployment scripts to create a [secret for
 pulling images](https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/#create-a-secret-in-the-cluster-that-holds-your-authorization-token):
 
@@ -52,7 +71,7 @@ Please make sure that you are logged in to the registry before deploying.
 
 #### OpenShift
 
-OpenShift users should make sure the [integrated Docker registry](https://docs.openshift.com/container-platform/3.3/install_config/registry/deploy_registry_existing_clusters.html)
+OpenShift users should make sure the [integrated Docker registry](https://docs.okd.io/latest/install_config/registry/deploy_registry_existing_clusters.html)
 in your OpenShift environment is available and that you've added it as an
 [insecure registry](https://docs.docker.com/registry/insecure/) in your local
 Docker engine. You must then specify the path to the OpenShift registry like so:
@@ -62,6 +81,22 @@ export DOCKER_REGISTRY_PATH=docker-registry-<registry-namespace>.<routing-domain
 ```
 
 Please make sure that you are logged in to the registry before deploying.
+
+##### Running OpenShift in Minishift
+
+You can use Minishift to run OpenShift locally in a single-node cluster. Minishift provides a convenient way to test out Conjur deployments on a laptop or local machine and also provides an integrated Docker daemon from which to stage and push images into the OpenShift registry. The ./openshift subdirectory contains two files:
+ * _minishift-boot.env that defines environment variables to configure Minishift, and
+ * _minishift-start.sh to startup Minishift.
+The script assumes VirtualBox as the hypervisor but others are supported. See https://github.com/minishift/minishift for more information.
+
+Steps to startup Minishift:
+
+ 0) ensure VirtualBox is installed
+ 1) cd openshift
+ 2) edit & source _minishift-boot.env
+ 3) run _minishift-start.sh
+ 4) source _minishift-boot.env again to user internal docker daemon
+ 5) cd ..
 
 ### Kubernetes / OpenShift Configuration
 
@@ -90,10 +125,10 @@ your user will need to have the `cluster-admin` role to do so):
 
 ```
 # Kubernetes
-kubectl create -f ./kubernetes/conjur-authenticator-role.yaml
+kubectl apply -f ./kubernetes/conjur-authenticator-role.yaml
 
 # OpenShift
-oc create -f ./openshift/conjur-authenticator-role.yaml
+oc apply -f ./openshift/conjur-authenticator-role.yaml
 ```
 
 ### Conjur Configuration
@@ -137,7 +172,57 @@ to create and configure a Conjur cluster comprised of one Master, two Standbys,
 and two read-only Followers. The final step will print out the necessary info
 for interacting with Conjur through the CLI or UI.
 
-### Conjur CLI
+### Data persistence
+
+The Conjur master and standbys are deployed as a
+[Stateful Set](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/) on supported target platforms (Kubernetes 1.5+ / OpenShift 3.5+).
+Database and configuration data is symlinked and mounted to
+[persistent volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/).
+These manifests assume a default [Storage Class](https://kubernetes.io/docs/concepts/storage/storage-classes/)
+is set up for the cluster so persistent volume claims will be fulfilled.
+
+Volumes:
+- `/opt/conjur/dbdata` - 2GB, database persistence
+- `/opt/conjur/data` - 1GB, seed file persistence
+
+#### Setup
+
+To configure the Conjur master to persist data, run these commands in the Conjur master container before running `evoke configure master ...`.
+
+```sh-session
+# mv /var/lib/postgresql/9.3 /opt/conjur/dbdata/
+# ln -sf /opt/conjur/dbdata/9.3 /var/lib/postgresql/9.3
+
+# evoke seed standby > /opt/conjur/data/standby-seed.tar
+```
+
+Note that setup is done as part of script [4_configure_master.sh](4_configure_master.sh).
+
+#### Restore
+
+If the Conjur master pod is rescheduled the persistent volumes will be reattached.
+Once the pod is running again, run these commands to restore the master.
+
+```
+# rm -rf /var/lib/postgresql/9.3
+# ln -sf /opt/conjur/dbdata/9.3 /var/lib/postgresql/9.3
+
+# cp /opt/conjur/data/standby-seed.tar /opt/conjur/data/standby-seed.tar-bkup
+# evoke unpack seed /opt/conjur/data/standby-seed.tar
+# cp /opt/conjur/data/standby-seed.tar-bkup /opt/conjur/data/standby-seed.tar
+# rm /etc/chef/solo.json
+
+# evoke configure master ...  # using the same arguments as the first launch
+```
+
+Standbys must also be reconfigured since the Conjur master pod IP changes.
+
+Run [relaunch_master.sh](relaunch_master.sh) to try this out in your cluster, after running the deploy.
+Our plan is to automate this process with a Kubernetes operator.
+
+---
+
+### Conjur CLI !!! These files no longer exist - think this section can be deleted. !!!
 
 The deploy scripts include a manifest for creating a Conjur CLI container within
 the Kubernetes environment that can then be used to interact with Conjur. Deploy

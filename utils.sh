@@ -1,6 +1,10 @@
 #!/bin/bash
 
-PLATFORM="${PLATFORM:-kubernetes}"  # default to kubernetes if env var not set
+CONJUR_VERSION=${CONJUR_VERSION:-$CONJUR_MAJOR_VERSION} # default to CONJUR_MAJOR_VERSION if not set
+PLATFORM="${PLATFORM:-kubernetes}" # default to kubernetes if not set
+
+MINIKUBE="${MINIKUBE:-false}"
+MINISHIFT="${MINISHIFT:-false}"
 
 if [ $PLATFORM = 'kubernetes' ]; then
     cli=kubectl
@@ -31,8 +35,10 @@ announce() {
 platform_image() {
   if [ $PLATFORM = "openshift" ]; then
     echo "$DOCKER_REGISTRY_PATH/$CONJUR_NAMESPACE_NAME/$1:$CONJUR_NAMESPACE_NAME"
-  else
+  elif ! is_minienv; then
     echo "$DOCKER_REGISTRY_PATH/$1:$CONJUR_NAMESPACE_NAME"
+  else
+    echo "$1:$CONJUR_NAMESPACE_NAME"
   fi
 }
 
@@ -61,8 +67,9 @@ copy_file_to_container() {
     local parent_path="$(dirname "$source_file_path")"
     local parent_name="$(basename "$parent_path")"
 
-    local container_temp_path="/tmp"
-      
+    local container_temp_path="/copy-tmp"
+
+    oc exec $pod_name -- mkdir -p $container_temp_path
     oc rsync "$parent_path" "$pod_name:$container_temp_path"
     oc exec "$pod_name" mv "$container_temp_path/$parent_name/$source_file_name" "$to"
     oc exec "$pod_name" rm -- -rf "$container_temp_path/$parent_name"
@@ -90,6 +97,11 @@ mastercmd() {
   fi
 }
 
+get_conjur_cli_pod_name() {
+  pod_list=$($cli get pods -l app=conjur-cli --no-headers | awk '{ print $1 }')
+  echo $pod_list | awk '{print $1}'
+}
+
 set_namespace() {
   if [[ $# != 1 ]]; then
     printf "Error in %s/%s - expecting 1 arg.\n" $(pwd) $0
@@ -103,6 +115,10 @@ wait_for_node() {
   wait_for_it -1 "$cli describe pod $1 | grep Status: | grep -q Running"
 }
 
+wait_for_service() {
+  wait_for_it -1 "$cli get service $1 --no-headers | grep -q -v pending"
+}
+
 function wait_for_it() {
   local timeout=$1
   local spacer=2
@@ -111,7 +127,7 @@ function wait_for_it() {
   if ! [ $timeout = '-1' ]; then
     local times_to_run=$((timeout / spacer))
 
-    echo "Waiting for $@ up to $timeout s"
+    echo "Waiting for '$@' up to $timeout s"
     for i in $(seq $times_to_run); do
       eval $@ && echo 'Success!' && break
       echo -n .
@@ -120,7 +136,7 @@ function wait_for_it() {
 
     eval $@
   else
-    echo "Waiting for $@ forever"
+    echo "Waiting for '$@' forever"
 
     while ! eval $@; do
       echo -n .
@@ -140,4 +156,12 @@ rotate_api_key() {
   $cli exec $master_pod_name -- conjur authn logout > /dev/null
 
   echo $api_key
+}
+
+function is_minienv() {
+  if [[ $MINIKUBE == false ]]; then
+    false
+  else
+    true
+  fi
 }

@@ -13,14 +13,13 @@ spec:
     name: ldaps
   selector:
     app: conjur-follower
-
 ---
 apiVersion: apps/v1beta1
 kind: Deployment
 metadata:
   name: conjur-follower
 spec:
-  replicas: 2
+  replicas: {{ CONJUR_FOLLOWER_COUNT }}
   template:
     metadata:
       labels:
@@ -32,7 +31,7 @@ spec:
       containers:
       - name: conjur-appliance
         image: {{ CONJUR_APPLIANCE_IMAGE }}
-        imagePullPolicy: Always
+        imagePullPolicy: {{ IMAGE_PULL_POLICY }}
         env:
           - name: CONJUR_AUTHENTICATORS
             value: authn-k8s/{{ AUTHENTICATOR_ID }}

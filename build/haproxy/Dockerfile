@@ -1,10 +1,12 @@
-FROM haproxy:1.7
+FROM haproxy:1.8
+
+ENV DEBIAN_FRONTEND noninteractive
 
 RUN apt-get update -y && \
-    apt-get install -y curl jq vim procps && \
+    apt-get install -y curl jq vim procps socat && \
     rm -rf /var/lib/apt/lists/*
 
-COPY conjur-health-check.sh /root/
-COPY start.sh /
+COPY docker-entrypoint.sh /docker-entrypoint.sh
 
-ENTRYPOINT sleep infinity
+COPY conjur-health-check.sh /root/
+COPY haproxy.cfg /usr/local/etc/haproxy/
